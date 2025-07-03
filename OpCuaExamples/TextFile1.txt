@@ -1,0 +1,439 @@
+﻿using Opc.Ua;
+using Opc.Ua.Client;
+using Opc.Ua.Configuration;
+using System;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Text;
+using ViCellBlu;
+
+
+namespace ViCellOpcUaClient
+{
+    /// <summary>
+    /// Demo OPC UA client for ViCell BLU.
+    /// 
+    /// This class demonstrates how to:
+    /// - Configure OPC UA client security and application settings
+    /// - Connect to an OPC UA server with username/password authentication
+    /// - Browse the server address space to locate method nodes
+    /// - Call the "RequestLock" method on the server
+    /// 
+    /// Usage:
+    ///   ViCellOpcUaClient_SimpleLock.exe [Ip Address] [Port] [Username] [Password]
+    /// 
+    /// Example:
+    ///   ViCellOpcUaClient_SimpleLock.exe 192.168.1.100 4840 user pass
+    /// 
+    /// This is a demonstration file and should be adapted for production use.                                                                                              
+    /// </summary>
+    class ViCellOpcUaClient_SimpleLock
+    {
+        // Holds the active OPC UA session.
+        private static Session _opcSession;
+        // Stores the collection of method nodes found during browsing.
+        private static ReferenceDescriptionCollection _methodCollection;
+        // The parent node of the methods (used as ObjectId in method calls).
+        private static NodeId _parentMethodNode;
+        // Namespace table for resolving ExpandedNodeIds.
+        private static NamespaceTable _namespaceUris;
+        // Application configuration for OPC UA client.
+        public static ApplicationConfiguration OpcAppConfig { get; private set; }
+
+        private static string applicationName = "ViCellOpcUaClient_ImplementationExample";
+        /// <summary>
+        /// Configures OPC UA application security settings for demo purposes.
+        /// Sets up certificate stores, trust lists, and validation behavior.
+        /// </summary>
+        private static void ConfigureSecurity()
+        {
+            OpcAppConfig.SecurityConfiguration.ApplicationCertificate = new CertificateIdentifier
+            {
+                StoreType = @"Directory",
+                StorePath = @"%CommonApplicationData%\ViCellBlu_dotNET\pki\own",
+                SubjectName = "CN=Vi-Cell BLU Client, C=US, S=Colorado, O=Beckman Coulter, DC=" + Dns.GetHostName()
+            };
+            OpcAppConfig.SecurityConfiguration.TrustedIssuerCertificates = new CertificateTrustList { StoreType = @"Directory", StorePath = @"%CommonApplicationData%\ViCellBlu_dotNET\pki\issuers" };
+            OpcAppConfig.SecurityConfiguration.TrustedPeerCertificates = new CertificateTrustList { StoreType = @"Directory", StorePath = @"%CommonApplicationData%\ViCellBlu_dotNET\pki\trusted" };
+            OpcAppConfig.SecurityConfiguration.RejectedCertificateStore = new CertificateTrustList { StoreType = @"Directory", StorePath = @"%CommonApplicationData%\ViCellBlu_dotNET\pki\rejected" };
+            OpcAppConfig.SecurityConfiguration.UserIssuerCertificates = new CertificateTrustList { StoreType = @"Directory", StorePath = @"%CommonApplicationData%\ViCellBlu_dotNET\pki\issuerUser" };
+            OpcAppConfig.SecurityConfiguration.TrustedUserCertificates = new CertificateTrustList { StoreType = @"Directory", StorePath = @"%CommonApplicationData%\ViCellBlu_dotNET\pki\trustedUser" };
+            OpcAppConfig.SecurityConfiguration.AddAppCertToTrustedStore = true;
+            OpcAppConfig.SecurityConfiguration.RejectSHA1SignedCertificates = false;
+            OpcAppConfig.SecurityConfiguration.RejectUnknownRevocationStatus = true;
+            OpcAppConfig.SecurityConfiguration.MinimumCertificateKeySize = 2048;
+            OpcAppConfig.SecurityConfiguration.SendCertificateChain = true;
+            OpcAppConfig.SecurityConfiguration.AutoAcceptUntrustedCertificates = true;
+            OpcAppConfig.CertificateValidator.CertificateValidation += (validator, e) =>
+            {
+                if (e.Error.StatusCode == StatusCodes.BadCertificateUntrusted)
+                    e.Accept = true;
+            };
+        }
+
+        /// <summary>
+        /// Browses the OPC UA server for references from a given node.
+        /// If no node is specified, starts from the ObjectsFolder.
+        /// </summary>
+        /// <param name="continuationPoint">Continuation point for browsing large address spaces.</param>
+        /// <param name="nodeId">NodeId to browse from (optional).</param>
+        /// <returns>Collection of references found.</returns>
+        private static ReferenceDescriptionCollection BrowseNode(out byte[] continuationPoint, NodeId nodeId = null)
+        {
+            if (nodeId == null)
+                nodeId = Opc.Ua.ObjectIds.ObjectsFolder;
+            _opcSession.Browse(null, null, nodeId, 0u, BrowseDirection.Forward, ReferenceTypeIds.HierarchicalReferences,
+                true,
+                (uint)NodeClass.Variable | (uint)NodeClass.Object | (uint)NodeClass.Method, out continuationPoint,
+                out var references);
+            return references;
+        }
+
+        /// <summary>
+        /// Overload to browse using ExpandedNodeId.
+        /// Converts ExpandedNodeId to NodeId using the namespace table.
+        /// </summary>
+        /// <param name="continuationPoint">Continuation point for browsing.</param>
+        /// <param name="expandedNodeId">ExpandedNodeId to browse from.</param>
+        /// <returns>Collection of references found.</returns>
+        private static ReferenceDescriptionCollection BrowseNode(out byte[] continuationPoint, ExpandedNodeId expandedNodeId)
+        {
+            var nodeId = ExpandedNodeId.ToNodeId(expandedNodeId, _namespaceUris);
+            return BrowseNode(out continuationPoint, nodeId);
+        }
+
+        /// <summary>
+        /// Initializes the OPC UA application configuration for demo.
+        /// Sets up application name, URI, security, transport, and client settings.
+        /// </summary>
+        private static void InitializeAppConfig()
+        {
+            OpcAppConfig = new ApplicationConfiguration
+            {
+                ApplicationName = applicationName,
+                ApplicationUri = Utils.Format(@"urn:{0}:ViCellBLU:Server", Dns.GetHostName()),
+                ApplicationType = ApplicationType.Client,
+                SecurityConfiguration = new SecurityConfiguration(),
+                TransportConfigurations = new TransportConfigurationCollection(),
+                TransportQuotas = new TransportQuotas(),
+                ClientConfiguration = new ClientConfiguration { DefaultSessionTimeout = 60000 },
+                DisableHiResClock = true,
+                TraceConfiguration = new TraceConfiguration(),
+                CertificateValidator = new CertificateValidator()
+            };
+            OpcAppConfig.TransportQuotas = new TransportQuotas
+            {
+                OperationTimeout = 600000,
+                MaxStringLength = 1048576,
+                MaxByteStringLength = 1048576,
+                MaxArrayLength = 65535,
+                MaxMessageSize = 4194304,
+                MaxBufferSize = 65535,
+                ChannelLifetime = 300000,
+                SecurityTokenLifetime = 3600000
+            };
+            OpcAppConfig.ClientConfiguration.MinSubscriptionLifetime = 10000;
+        }
+
+        /// <summary>
+        /// Establishes a session with the OPC UA server.
+        /// Handles endpoint selection, user authentication, and session creation.
+        /// </summary>
+        /// <param name="endpointUrl">OPC UA server endpoint URL.</param>
+        /// <param name="username">Username for authentication.</param>
+        /// <param name="password">Password for authentication.</param>
+        /// <returns>Established Session object.</returns>
+        private static Session CreateSession(string endpointUrl, string username, string password)
+        {
+            var application = new ApplicationInstance
+            {
+                ApplicationType = ApplicationType.Client,
+                ApplicationName = applicationName,
+                ApplicationConfiguration = OpcAppConfig
+            };
+
+            // Ensure application certificate exists
+            var haveAppCertificateTask = application.CheckApplicationInstanceCertificate(false, 0);
+            var haveAppCertificate = haveAppCertificateTask.Result;
+            if (haveAppCertificate)
+                OpcAppConfig.ApplicationUri = X509Utils.GetApplicationUriFromCertificate(OpcAppConfig.SecurityConfiguration.ApplicationCertificate.Certificate);
+
+            // Select the best endpoint (with security if possible)
+            var selectedEndpoint = CoreClientUtils.SelectEndpoint(OpcAppConfig, endpointUrl, haveAppCertificate, 15000);
+            var endpointConfiguration = EndpointConfiguration.Create(OpcAppConfig);
+            var endpoint = new ConfiguredEndpoint(null, selectedEndpoint, endpointConfiguration);
+
+            // Set up user identity (username/password)
+            var user = new UserIdentity(username, password);
+
+            // Create the session
+            var sessionTask = Session.Create(OpcAppConfig, endpoint, true, false, applicationName, 240000, user, null);
+            return sessionTask.Result;
+        }
+
+        /// <summary>
+        /// Browses to the Methods node and sets up method collection and parent node.
+        /// This is required to locate the "RequestLock" method.
+        /// </summary>
+        private static void SetupMethodCollection()
+        {
+            // Browse root objects
+            var scoutXrefs = BrowseNode(out _);
+            // Find the ViCellBluStateObject node
+            var viCellBlu = scoutXrefs.First(n => n.BrowseName.Name.Equals("ViCellBluStateObject"));
+            // Browse its children
+            var viCellBluRefs = BrowseNode(out _, viCellBlu.NodeId);
+            // Find the Methods node
+            var browsedMethods = viCellBluRefs.First(n => n.BrowseName.Name.Equals("Methods"));
+            // Browse the Methods node to get available methods
+            _methodCollection = BrowseNode(out _, browsedMethods.NodeId);
+            // Store the parent node for method calls
+            _parentMethodNode = ExpandedNodeId.ToNodeId(browsedMethods.NodeId, _opcSession.NamespaceUris);
+
+        }
+
+        // Replace the Main method with exit option and looped selection
+        static void Main(string[] args)
+        {
+            // Hardcoded parameters as requested
+            var ipAddress = "127.0.0.1";
+            var port = "62641";
+            var username = "bci_service";
+            var password = "112691";
+
+            try
+            {
+                //var endpointUrl = $"opc.tcp://{ipAddress}:{port}/ViCellBlu/Server";
+
+                var endpointUrl = $"opc.tcp://{"127.0.0.1"}:{"62641"}/ViCellBlu/Server";
+
+                // Initialize and configure application
+                InitializeAppConfig();
+                ConfigureSecurity();
+                OpcAppConfig.Validate(ApplicationType.Client).Wait();
+
+                // Create session
+                _opcSession = CreateSession(endpointUrl, username, password);
+                Console.WriteLine("Connection status " + _opcSession.Connected.ToString());
+
+                
+                _namespaceUris = _opcSession.NamespaceUris;
+
+                // Browse and setup method collection
+                SetupMethodCollection();
+
+                // Get and display available commands
+                var commands = GetAvailableCommands();
+                var menuCommands = commands.Concat(new[] { "Exit" }).ToArray();
+
+                while (true)
+                {
+                    Console.WriteLine("Available commands:");
+                    for (int i = 0; i < menuCommands.Length; i++)
+                    {
+                        Console.WriteLine($"{i + 1}. {menuCommands[i]}");
+                    }
+                    Console.WriteLine("Select a command by entering its number:");
+                    if (int.TryParse(Console.ReadLine(), out int selection) && selection > 0 && selection <= menuCommands.Length)
+                    {
+                        var selectedCommand = menuCommands[selection - 1];
+                        if (selectedCommand == "Exit")
+                        {
+                            Console.WriteLine("Exiting application.");
+                            break;
+                        }
+                        switch (selectedCommand)
+                        {
+                            case "RequestLock":
+                                CallRequestLock();
+                                Console.WriteLine("RequestLock called successfully.");
+                                break;
+                            default:
+                                Console.WriteLine($"Command '{selectedCommand}' is not implemented yet.");
+                                break;
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("Invalid selection.");
+                    }
+                    Console.WriteLine();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Exception: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Gets all available method names (commands) from the Methods node.
+        /// </summary>
+        /// <returns>Array of method names as strings.</returns>
+        public static string[] GetAvailableCommands()
+        {
+            if (_methodCollection == null)
+                throw new InvalidOperationException("Method collection is not initialized. Call SetupMethodCollection() first.");
+
+            return _methodCollection
+                .Where(n => n.NodeClass == NodeClass.Method)
+                .Select(n => n.DisplayName.Text)
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Replace the CallRequestLock method with this version
+        /// </summary>
+        private static void CallRequestLock()
+        {
+            // Find the RequestLock method node
+            var methodRequestLock = _methodCollection.First(n => n.DisplayName.ToString().Equals("RequestLock"));
+            var methodNodeRequestLock = ExpandedNodeId.ToNodeId(methodRequestLock.NodeId, _opcSession.NamespaceUris);
+
+            Console.WriteLine($"Calling method: {methodRequestLock.DisplayName}");
+
+            // Prepare method call request (no input arguments for RequestLock)
+            var reqHeaderRequestLock = new RequestHeader();
+            var cmRequestRequestLock = new CallMethodRequest
+            {
+                ObjectId = _parentMethodNode,
+                MethodId = methodNodeRequestLock,
+                InputArguments = new VariantCollection() // Add input arguments here if needed
+            };
+            var cmReqCollectionRequestLock = new CallMethodRequestCollection { cmRequestRequestLock };
+
+            // Show what is being sent
+            Console.WriteLine("Sending:");
+            Console.WriteLine($"  Command: {methodRequestLock.DisplayName}");
+
+            // Call the method
+            _opcSession.Call(reqHeaderRequestLock, cmReqCollectionRequestLock, out var resultCollectionRequestLock, out var diagResultsRequestLock);
+
+            // Show output
+            var result = resultCollectionRequestLock[0];
+            Console.WriteLine("Method call result status: " + result.StatusCode);
+
+            //decoding the output
+            if ((resultCollectionRequestLock.Count > 0) && (resultCollectionRequestLock[0].OutputArguments.Count > 0))
+            {
+                ViCellBlu.VcbResult callResult = DecodeRaw(resultCollectionRequestLock[0].OutputArguments[0].Value,
+                    (ServiceMessageContext)_opcSession.MessageContext);
+
+               DecodeRawLockResult(resultCollectionRequestLock[0].OutputArguments[0].Value,
+                    (ServiceMessageContext)_opcSession.MessageContext, diagResultsRequestLock);
+            }
+            else
+            {
+                Console.WriteLine("No output values.");
+            }
+        }
+
+        /// <summary>
+        /// Attempts to convert a byte array to a UTF8 string.
+        /// Includes basic error handling and fallback to hex representation.
+        /// </summary>
+        /// <param name="bytes">The byte array to convert.</param>
+        /// <returns>The converted string, or a string indicating conversion failure or hex representation.</returns>
+        private static string ConvertBytesToString(byte[] bytes)
+        {
+            if (bytes == null)
+            {
+                return "(null)";
+            }
+
+            if (bytes.Length == 0)
+            {
+                return "(empty byte array)";
+            }
+
+            try
+            {
+                // Attempt UTF8 conversion
+                string utf8String = System.Text.Encoding.UTF8.GetString(bytes);
+
+                // Basic check for non-printable characters - you might refine this
+                // This is a simple heuristic; actual binary data could contain these.
+                if (utf8String.Any(c => char.IsControl(c) && c != '\r' && c != '\n' && c != '\t'))
+                {
+                    // Looks like it might be binary data rather than a string
+                    Console.WriteLine("    Note: Byte array might contain non-printable characters. Showing raw bytes.");
+                    // Fallback to Hex representation
+                    return $"[Hex: {BitConverter.ToString(bytes)}]";
+                }
+
+                return utf8String; // Return the converted string if it seems valid
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"    Error converting byte[] to UTF8 string: {ex.Message}. Showing raw bytes.");
+                // Fallback to Hex representation on error
+                return $"[Conversion Failed - Hex: {BitConverter.ToString(bytes)}]";
+            }
+        }
+        public static ViCellBlu.VcbResult DecodeRaw(Object rawResult, ServiceMessageContext messageContext)
+        {
+            ViCellBlu.VcbResult callResult = new ViCellBlu.VcbResult() { ErrorLevel = ErrorLevelEnum.Warning, MethodResult = MethodResultEnum.Failure };
+            callResult.ErrorLevel = ErrorLevelEnum.Warning;
+            callResult.MethodResult = MethodResultEnum.Failure;
+            callResult.ResponseDescription = "Decoding raw result ...";
+            try
+            {
+                byte[] myData;
+                var val = (Opc.Ua.ExtensionObject)rawResult;
+                myData = (byte[])val.Body;
+                callResult.Decode(new Opc.Ua.BinaryDecoder(myData, 0, myData.Count(), messageContext));
+            }
+            catch (Exception ex)
+            {
+                callResult.ErrorLevel = ErrorLevelEnum.RequiresUserInteraction;
+                callResult.MethodResult = MethodResultEnum.Failure;
+                callResult.ResponseDescription = "DecodeRaw-Exception: " + ex.ToString();
+            }
+            return callResult;
+        }
+
+
+        public static void DecodeRawLockResult(Object rawResult, ServiceMessageContext messageContext,DiagnosticInfoCollection diagResultsRequestLock)
+        {
+            ViCellBlu.VcbResult callResult = new ViCellBlu.VcbResult() { ErrorLevel = ErrorLevelEnum.Warning, MethodResult = MethodResultEnum.Failure };
+            callResult.ErrorLevel = ErrorLevelEnum.Warning;
+            callResult.MethodResult = MethodResultEnum.Failure;
+            callResult.ResponseDescription = "Decoding raw result ...";
+            try
+            {
+                byte[] myData;
+                var val = (Opc.Ua.ExtensionObject)rawResult;
+                myData = (byte[])val.Body;
+                callResult.Decode(new Opc.Ua.BinaryDecoder(myData, 0, myData.Count(), messageContext));
+
+                IDecoder decoder = new Opc.Ua.BinaryDecoder(myData, 0, myData.Count(), messageContext);
+                decoder.PushNamespace(ViCellBlu.Namespaces.ViCellBlu);
+
+                var MethodResult = (MethodResultEnum)decoder.ReadEnumerated("MethodResult", typeof(MethodResultEnum));
+                var ResponseDescription = decoder.ReadString("ResponseDescription");
+                var ErrorLevel = (ErrorLevelEnum)decoder.ReadEnumerated("ErrorLevel", typeof(ErrorLevelEnum));
+                var Lockstate = (LockStateEnum)decoder.ReadEnumerated("LockState", typeof(LockStateEnum));
+
+                Console.WriteLine($"MethodResult: {MethodResult}");
+                Console.WriteLine($"ResponseDescription: {ResponseDescription}");
+                Console.WriteLine($"ErrorLevel: {ErrorLevel}");
+                Console.WriteLine($"LockState: {Lockstate}");
+                Console.WriteLine($"Diagnostic result:{diagResultsRequestLock.ToString()}");
+
+
+            }
+            catch (Exception ex)
+            {
+                callResult.ErrorLevel = ErrorLevelEnum.RequiresUserInteraction;
+                callResult.MethodResult = MethodResultEnum.Failure;
+                callResult.ResponseDescription = "DecodeRaw-Exception: " + ex.ToString();
+            }
+     
+        }
+    }
+
+}
+
+
+
