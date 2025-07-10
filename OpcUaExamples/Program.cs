@@ -92,7 +92,7 @@ namespace ViCellOpcUaClient
                                 StartSampleExportOperation startExport = new StartSampleExportOperation();
                                 // With the following code to prompt the user for the UUID:
                                 Console.Write("Get the UUID by running GetSampleResults command");
-                                Console.Write("\nEnter the UUID or multiple UUIDs (separated by commas) of the sample results you wish to delete: ");
+                                Console.Write("\nEnter the UUID : ");
                                 {
                                     string getUUID = Console.ReadLine();
                                     startExport.CallRetrieveSampleExport(getUUID);

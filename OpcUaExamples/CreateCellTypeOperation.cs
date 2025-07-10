@@ -21,7 +21,7 @@ namespace OPCUAExamples
 
             //create cell type
             CellType cell = new CellType();
-            cell.CellTypeName = "OPCUAExampleCellType2";
+            cell.CellTypeName = $"CT_{DateTime.Now:MMddHHmmssfff}"; 
             cell.ConcentrationAdjustmentFactor = (float)-10.00;
             cell.NumAspirationCycles = (int)5;
             cell.DeclusterDegree = DeclusterDegreeEnum.Medium;

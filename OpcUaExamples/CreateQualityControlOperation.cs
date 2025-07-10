@@ -21,7 +21,7 @@ namespace OPCUAExamples
 
             //create quality control
             QualityControl qc = new QualityControl();
-            qc.QualityControlName = $"QCFromOpcuaExample_{DateTime.Now:yyyyMMdd_HHmmss_fff}";
+            qc.QualityControlName = $"QC_{DateTime.Now:MMddHHmmssfff}";
             qc.CellTypeName = "Yeast";
             qc.AcceptanceLimits = 100;
             qc.AssayParameter = AssayParameterEnum.Concentration;

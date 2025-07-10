@@ -75,7 +75,7 @@ namespace OPCUAExamples
                 "WashType"
             };
 
-            Console.WriteLine("Input Arguments For Sample:");
+            Console.WriteLine("Input Arguments For Sample Set:");
             int sampleIndex = 1;
             foreach (var sample in sampleList)
             {
