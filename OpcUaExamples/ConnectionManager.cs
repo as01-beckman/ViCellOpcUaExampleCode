@@ -29,11 +29,22 @@ namespace OPCUAExamples
         private static string _applicationName = "ViCellOpcUaClient_ImplementationExample";
         public static void InitializeConnection()
         {
-            // Hardcoded parameters for the example
-            var ipAddress = "127.0.0.1"; // Replace with your Vi-Cell BLU IP
-            var port = "62641";         // Replace with your Vi-Cell BLU Port
-            var username = "factory_admin"; // Replace with your username
-            var password = "Pass#12345";     // Replace with your password
+            Console.WriteLine("Enter OPC UA Server IP Address (e.g., 127.0.0.1):");
+            var ipAddress = Console.ReadLine();
+
+            Console.WriteLine("Enter OPC UA Server Port (e.g., 62641):");
+            var port = Console.ReadLine();
+
+            Console.WriteLine("Enter Username:");
+            var username = Console.ReadLine();
+
+            Console.WriteLine("Enter Password:");
+            var password = Console.ReadLine();
+
+            //var ipAddress = "127.0.0.1"; // Replace with your Vi-Cell BLU IP
+            //var port = "62641";         // Replace with your Vi-Cell BLU Port
+            //var username = "factory_admin"; // Replace with your username
+            //var password = "Pass#12345";     // Replace with your password
 
             try
             {
