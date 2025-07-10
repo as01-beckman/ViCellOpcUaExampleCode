@@ -21,13 +21,13 @@ namespace OPCUAExamples
 
             //create quality control
             QualityControl qc = new QualityControl();
-            qc.QualityControlName = "QCFromOpcuaExample10";
+            qc.QualityControlName = $"QCFromOpcuaExample_{DateTime.Now:yyyyMMdd_HHmmss_fff}";
             qc.CellTypeName = "Yeast";
             qc.AcceptanceLimits = 100;
             qc.AssayParameter = AssayParameterEnum.Concentration;
             qc.AssayValue = (double)99999.00;
             qc.Comments = "QC from opcua example";
-            qc.ExpirationDate = DateTime.Parse("2025-07-07T00:00:00.000Z");
+            qc.ExpirationDate = DateTime.Parse("2050-07-07T00:00:00.000Z");
             qc.LotNumber = "Lot-111";
 
 

@@ -62,6 +62,36 @@ namespace OPCUAExamples
                 Samples = new ViCellBlu.SampleConfigCollection(sampleList.ToArray()) // Add the list of sample configs.
             };
 
+            // Print the sampleList contents in a readable format (similar to GetSampleResultsOperation)
+            string[] sampleArgumentNames = new[]
+            {
+                "SampleName",
+                "SamplePosition (Column, Row)",
+                "Tag",
+                "Dilution",
+                "CellType",
+                "QualityControl",
+                "SaveEveryNthImage",
+                "WashType"
+            };
+
+            Console.WriteLine("Input Arguments For Sample:");
+            int sampleIndex = 1;
+            foreach (var sample in sampleList)
+            {
+                Console.WriteLine($"\tSample {sampleIndex}:");
+                Console.WriteLine($"\t  {sampleArgumentNames[0]}: {sample.SampleName}");
+                Console.WriteLine($"\t  {sampleArgumentNames[1]}: Column {sample.SamplePosition.Column}, Row {sample.SamplePosition.Row}");
+                Console.WriteLine($"\t  {sampleArgumentNames[2]}: {sample.Tag}");
+                Console.WriteLine($"\t  {sampleArgumentNames[3]}: {sample.Dilution}");
+                Console.WriteLine($"\t  {sampleArgumentNames[4]}: {(sample.CellType?.CellTypeName ?? string.Empty)}");
+                Console.WriteLine($"\t  {sampleArgumentNames[5]}: {(sample.QualityControl?.QualityControlName ?? string.Empty)}");
+                Console.WriteLine($"\t  {sampleArgumentNames[6]}: {sample.SaveEveryNthImage}");
+                Console.WriteLine($"\t  {sampleArgumentNames[7]}: {sample.WashType}");
+                Console.WriteLine();
+                sampleIndex++;
+            }
+
             // Initialize a default VcbResult object for the output.
             var callResult = new ViCellBlu.VcbResult
             {
